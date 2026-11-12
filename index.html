@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Podcast Subs</title>
+<style>
+  :root {
+    --bg: #0e0f11; --panel: #17191c; --line: #2a2d31; --hover: #1d2024;
+    --ink: #f2f3f5; --dim: #6c727a; --mid: #a3a9b1; --accent: #4fa3ff; --now: #1b2633;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; }
+  body { display: flex; flex-direction: column; }
+  button { background: #24272b; color: var(--ink); border: 1px solid var(--line);
+    border-radius: 10px; font-size: 22px; padding: 12px 18px; min-width: 64px; cursor: pointer; }
+  button:active { background: #31353a; }
+  .hidden { display: none !important; }
+
+  /* ---------- 목록 화면 ---------- */
+  #listView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .listTop { display: flex; gap: 12px; padding: 14px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
+  .tab.on { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 700; }
+  #q { flex: 1 1 260px; font-size: 22px; padding: 12px 16px; border-radius: 10px;
+    border: 1px solid var(--line); background: #0b0c0e; color: var(--ink); }
+  #count { color: var(--dim); font-size: 16px; }
+  #episodes { flex: 1; overflow-y: auto; padding: 8px 12px 40px; }
+  .ep { display: flex; gap: 16px; align-items: baseline; padding: 16px 12px;
+    border-bottom: 1px solid var(--line); cursor: pointer; border-radius: 8px; }
+  .ep:hover { background: var(--hover); }
+  .ep .d { color: var(--dim); font-size: 16px; min-width: 96px; font-variant-numeric: tabular-nums; }
+  .ep .n { font-size: 22px; line-height: 1.3; }
+  .ep.off { cursor: default; }
+  .ep.off .n { color: var(--dim); }
+  .ep .tag { color: var(--dim); font-size: 14px; margin-left: 8px; white-space: nowrap; }
+  .ep.last .n::after { content: "  · 마지막으로 본 화"; color: var(--accent); font-size: 15px; }
+
+  /* ---------- 자막 화면 ---------- */
+  #subView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+    background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  #title { flex: 1 1 200px; font-size: 18px; color: var(--mid); white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  #clock { font-size: 28px; font-variant-numeric: tabular-nums; min-width: 110px; text-align: right; }
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  #play { background: var(--accent); color: #06121f; border-color: var(--accent);
+    font-weight: 700; min-width: 140px; }
+  #play.paused { background: #24272b; color: var(--ink); border-color: var(--line); }
+  #lines { flex: 1; overflow-y: auto; padding: 40vh 24px; }
+  .ln { font-size: 30px; line-height: 1.35; color: var(--dim); padding: 10px 12px;
+    border-radius: 10px; cursor: pointer; }
+  .ln.near { color: var(--mid); }
+  .ln.now { color: var(--ink); font-size: 42px; font-weight: 600; background: var(--now); }
+  .ln .t { font-size: 14px; color: var(--dim); margin-right: 10px; font-variant-numeric: tabular-nums; }
+  #hint { padding: 8px 16px; font-size: 15px; color: var(--dim); background: var(--panel);
+    border-top: 1px solid var(--line); }
+  #msg { padding: 40px 24px; font-size: 22px; color: var(--mid); }
+</style>
+</head>
+<body>
+
+<!-- 목록 화면 -->
+<section id="listView">
+  <div class="listTop">
+    <button class="tab" data-show="badfriends">Bad Friends</button>
+    <button class="tab" data-show="tigerbelly">TigerBelly</button>
+    <button id="order"></button>
+    <input id="q" type="search" placeholder="제목이나 게스트 이름으로 검색" autocomplete="off">
+    <span id="count"></span>
+  </div>
+  <div id="episodes"><div id="msg">목록을 불러오는 중입니다.</div></div>
+</section>
+
+<!-- 자막 화면 -->
+<section id="subView" class="hidden">
+  <header>
+    <button id="back">← 목록</button>
+    <div id="title"></div>
+    <div class="btns">
+      <button data-d="-5">-5</button>
+      <button data-d="-1">-1</button>
+      <button id="play" class="paused">▶ 시작</button>
+      <button data-d="1">+1</button>
+      <button data-d="5">+5</button>
+    </div>
+    <div id="clock">0:00</div>
+  </header>
+  <div id="lines"></div>
+  <div id="hint">에피소드를 틀고 지금 들리는 문장을 터치하면 그 시간부터 자막이 따라갑니다. 차에서 일시정지하면 여기서도 ⏸를 눌러 주세요.</div>
+</section>
+
+<script>
+(() => {
+  // ---------------------------------------------------------------- 공통
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
+  };
+  const fmt = s => {
+    s = Math.max(0, Math.floor(s));
+    const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+    return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0");
+  };
+  const day = iso => iso ? iso.slice(0, 10) : "";
+  const getJSON = url => fetch(url, { cache: "no-store" }).then(r => {
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  });
+
+  // ---------------------------------------------------------------- 목록 화면
+  let show = store.get("show", "badfriends");
+  let episodes = [];
+  let oldestFirst = store.get("oldestFirst", true);
+  const indexCache = {};
+
+  function setTab() {
+    for (const b of document.querySelectorAll(".tab")) b.classList.toggle("on", b.dataset.show === show);
+  }
+
+  function renderList() {
+    const q = $("q").value.trim().toLowerCase();
+    const last = store.get("last", null);
+    $("order").textContent = oldestFirst ? "오래된 순" : "최신 순";
+    const list = episodes
+      .filter(e => !q || e.title.toLowerCase().includes(q))
+      .sort((a, b) => (oldestFirst ? 1 : -1) * ((a.published || "") < (b.published || "") ? -1 : 1));
+    const ready = episodes.filter(e => e.has_subs).length;
+    $("count").textContent = `자막 ${ready} / 전체 ${episodes.length}편`;
+    const box = $("episodes");
+    box.innerHTML = "";
+    if (!list.length) {
+      box.innerHTML = '<div id="msg">검색 결과가 없습니다.</div>';
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const e of list) {
+      const row = document.createElement("div");
+      row.className = "ep" + (e.has_subs ? "" : " off") +
+        (last && last.show === show && last.id === e.id ? " last" : "");
+      const d = document.createElement("span");
+      d.className = "d";
+      d.textContent = day(e.published);
+      const n = document.createElement("span");
+      n.className = "n";
+      n.textContent = e.title;
+      if (!e.has_subs) {
+        const tag = document.createElement("span");
+        tag.className = "tag";
+        tag.textContent = "자막 준비 중";
+        n.appendChild(tag);
+      }
+      row.append(d, n);
+      if (e.has_subs) row.addEventListener("click", () => { location.hash = `#${show}/${e.id}`; });
+      frag.appendChild(row);
+    }
+    box.appendChild(frag);
+  }
+
+  function loadShow(s) {
+    show = s;
+    store.set("show", s);
+    setTab();
+    if (indexCache[s]) { episodes = indexCache[s]; renderList(); return; }
+    $("episodes").innerHTML = '<div id="msg">목록을 불러오는 중입니다.</div>';
+    getJSON(`subs/${s}/index.json`)
+      .then(data => { episodes = indexCache[s] = data.episodes || []; if (show === s) renderList(); })
+      .catch(err => {
+        $("episodes").innerHTML = `<div id="msg">목록을 불러오지 못했습니다. subs/${s}/index.json 이 올라가 있는지 확인하세요. (${err.message})</div>`;
+      });
+  }
+
+  for (const b of document.querySelectorAll(".tab")) {
+    b.addEventListener("click", () => { $("q").value = ""; loadShow(b.dataset.show); });
+  }
+  $("q").addEventListener("input", renderList);
+  $("order").addEventListener("click", () => {
+    oldestFirst = !oldestFirst;
+    store.set("oldestFirst", oldestFirst);
+    renderList();
+  });
+
+  // ---------------------------------------------------------------- 자막 화면
+  let segs = [], els = [], cur = -1;
+  let playing = false, base = 0, startedAt = 0;
+  let timer = null;
+
+  const now = () => playing ? base + (performance.now() - startedAt) / 1000 : base;
+
+  function setPlaying(p) {
+    if (p === playing) return;
+    if (p) { startedAt = performance.now(); } else { base = now(); }
+    playing = p;
+    $("play").textContent = p ? "⏸ 일시정지" : (base > 0 ? "▶ 재생" : "▶ 시작");
+    $("play").classList.toggle("paused", !p);
+  }
+
+  function setTime(t, autoplay) {
+    base = Math.max(0, t);
+    startedAt = performance.now();
+    if (autoplay) setPlaying(true);
+    cur = -1;
+    tick(true);
+  }
+
+  function findIndex(t) {
+    let lo = 0, hi = segs.length - 1, ans = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (segs[mid].s <= t) { ans = mid; lo = mid + 1; } else { hi = mid - 1; }
+    }
+    return ans;
+  }
+
+  function tick(force) {
+    const t = now();
+    $("clock").textContent = fmt(t);
+    const i = findIndex(t);
+    if (i === cur && !force) return;
+    if (cur >= 0 && els[cur]) els[cur].classList.remove("now");
+    for (const e of $("lines").querySelectorAll(".near")) e.classList.remove("near");
+    cur = i;
+    if (i >= 0) {
+      els[i].classList.add("now");
+      if (els[i - 1]) els[i - 1].classList.add("near");
+      if (els[i + 1]) els[i + 1].classList.add("near");
+      els[i].scrollIntoView({ block: "center", behavior: force ? "auto" : "smooth" });
+    }
+  }
+
+  function openEpisode(s, id) {
+    $("listView").classList.add("hidden");
+    $("subView").classList.remove("hidden");
+    playing = false; base = 0; cur = -1; segs = []; els = [];
+    $("play").textContent = "▶ 시작";
+    $("play").classList.add("paused");
+    $("clock").textContent = "0:00";
+    $("title").textContent = "불러오는 중…";
+    $("lines").innerHTML = '<div id="msg">자막을 불러오는 중입니다.</div>';
+    getJSON(`subs/${s}/${id}.json`).then(data => {
+      store.set("last", { show: s, id });
+      segs = data.segments || [];
+      $("title").textContent = data.title || "";
+      document.title = data.title || "Podcast Subs";
+      const frag = document.createDocumentFragment();
+      els = segs.map(seg => {
+        const d = document.createElement("div");
+        d.className = "ln";
+        const tt = document.createElement("span");
+        tt.className = "t";
+        tt.textContent = fmt(seg.s);
+        d.append(tt, document.createTextNode(seg.t));
+        d.addEventListener("click", () => setTime(seg.s, true));   // 터치한 문장으로 맞추고 재생
+        frag.appendChild(d);
+        return d;
+      });
+      $("lines").innerHTML = "";
+      $("lines").appendChild(frag);
+      $("lines").scrollTop = 0;
+      tick(true);
+    }).catch(err => {
+      $("title").textContent = "자막을 불러오지 못했습니다";
+      $("lines").innerHTML = `<div id="msg">자막 파일을 찾지 못했습니다. (${err.message})</div>`;
+    });
+  }
+
+  function closeEpisode() {
+    setPlaying(false);
+    $("subView").classList.add("hidden");
+    $("listView").classList.remove("hidden");
+    document.title = "Podcast Subs";
+    renderList();
+  }
+
+  $("play").addEventListener("click", () => setPlaying(!playing));
+  $("back").addEventListener("click", () => { location.hash = ""; });
+  for (const b of document.querySelectorAll("button[data-d]")) {
+    b.addEventListener("click", () => setTime(now() + Number(b.dataset.d), false));
+  }
+  timer = setInterval(() => { if (playing) tick(false); }, 200);
+
+  // ---------------------------------------------------------------- 화면 전환 (#쇼/에피소드ID)
+  function route() {
+    const m = location.hash.match(/^#(\w+)\/(\w+)$/);
+    if (m) {
+      if (show !== m[1]) loadShow(m[1]);
+      openEpisode(m[1], m[2]);
+    } else {
+      closeEpisode();
+    }
+  }
+  window.addEventListener("hashchange", route);
+
+  loadShow(show);
+  route();
+})();
+</script>
+</body>
+</html>

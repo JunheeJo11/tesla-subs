@@ -1,0 +1,5 @@
+tmp_audio/
+failed.txt
+__pycache__/
+*.part
+*Zone.Identifier
