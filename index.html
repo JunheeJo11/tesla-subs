@@ -9,6 +9,7 @@
   :root {
     --bg: #0e0f11; --panel: #17191c; --line: #2a2d31; --hover: #1d2024;
     --ink: #f2f3f5; --dim: #6c727a; --mid: #a3a9b1; --accent: #4fa3ff; --now: #1b2633;
+    --music: #ff5c7a;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
@@ -24,6 +25,7 @@
   .listTop { display: flex; gap: 12px; padding: 14px 16px; background: var(--panel);
     border-bottom: 1px solid var(--line); flex-wrap: wrap; align-items: center; }
   .tab.on { background: var(--accent); color: #06121f; border-color: var(--accent); font-weight: 700; }
+  .tab[data-show="lyrics"].on { background: var(--music); border-color: var(--music); color: #1f060c; }
   #q { flex: 1 1 260px; font-size: 22px; padding: 12px 16px; border-radius: 10px;
     border: 1px solid var(--line); background: #0b0c0e; color: var(--ink); }
   #count { color: var(--dim); font-size: 16px; }
@@ -33,12 +35,15 @@
   .ep:hover { background: var(--hover); }
   .ep .d { color: var(--dim); font-size: 16px; min-width: 96px; font-variant-numeric: tabular-nums; }
   .ep .n { font-size: 22px; line-height: 1.3; }
+  .ep .a { color: var(--mid); font-size: 18px; margin-left: 10px; }
   .ep.off { cursor: default; }
   .ep.off .n { color: var(--dim); }
   .ep .tag { color: var(--dim); font-size: 14px; margin-left: 8px; white-space: nowrap; }
+  .ep .tag.sync { color: var(--music); }
   .ep.last .n::after { content: "  · 마지막으로 본 화"; color: var(--accent); font-size: 15px; }
+  .sectionTitle { color: var(--dim); font-size: 16px; padding: 14px 12px 6px; }
 
-  /* ---------- 자막 화면 ---------- */
+  /* ---------- 자막/가사 화면 ---------- */
   #subView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   header { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
     background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -50,8 +55,10 @@
     font-weight: 700; min-width: 140px; }
   #play.paused { background: #24272b; color: var(--ink); border-color: var(--line); }
   #lines { flex: 1; overflow-y: auto; padding: 40vh 24px; }
+  #lines.plain { padding: 24px; }
   .ln { font-size: 30px; line-height: 1.35; color: var(--dim); padding: 10px 12px;
     border-radius: 10px; cursor: pointer; }
+  #lines.plain .ln { color: var(--ink); cursor: default; }
   .ln.near { color: var(--mid); }
   .ln.now { color: var(--ink); font-size: 42px; font-weight: 600; background: var(--now); }
   .ln .t { font-size: 14px; color: var(--dim); margin-right: 10px; font-variant-numeric: tabular-nums; }
@@ -67,19 +74,20 @@
   <div class="listTop">
     <button class="tab" data-show="badfriends">Bad Friends</button>
     <button class="tab" data-show="tigerbelly">TigerBelly</button>
+    <button class="tab" data-show="lyrics">가사</button>
     <button id="order"></button>
-    <input id="q" type="search" placeholder="제목이나 게스트 이름으로 검색" autocomplete="off">
+    <input id="q" type="search" autocomplete="off">
     <span id="count"></span>
   </div>
   <div id="episodes"><div id="msg">목록을 불러오는 중입니다.</div></div>
 </section>
 
-<!-- 자막 화면 -->
+<!-- 자막/가사 화면 -->
 <section id="subView" class="hidden">
   <header>
     <button id="back">← 목록</button>
     <div id="title"></div>
-    <div class="btns">
+    <div class="btns" id="ctrls">
       <button data-d="-5">-5</button>
       <button data-d="-1">-1</button>
       <button id="play" class="paused">▶ 시작</button>
@@ -89,7 +97,7 @@
     <div id="clock">0:00</div>
   </header>
   <div id="lines"></div>
-  <div id="hint">에피소드를 틀고 지금 들리는 문장을 터치하면 그 시간부터 자막이 따라갑니다. 차에서 일시정지하면 여기서도 ⏸를 눌러 주세요.</div>
+  <div id="hint"></div>
 </section>
 
 <script>
@@ -106,12 +114,22 @@
     return (h ? h + ":" + String(m).padStart(2, "0") : m) + ":" + String(x).padStart(2, "0");
   };
   const day = iso => iso ? iso.slice(0, 10) : "";
-  const getJSON = url => fetch(url, { cache: "no-store" }).then(r => {
+  const getJSON = (url, opts) => fetch(url, opts || { cache: "no-store" }).then(r => {
     if (!r.ok) throw new Error(r.status);
     return r.json();
   });
+  const el = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  };
 
-  // ---------------------------------------------------------------- 목록 화면
+  const HINT_PODCAST = "에피소드를 틀고 지금 들리는 문장을 터치하면 그 시간부터 자막이 따라갑니다. 차에서 일시정지하면 여기서도 ⏸를 눌러 주세요.";
+  const HINT_SYNC = "노래를 틀고 지금 부르는 줄을 터치하면 그때부터 가사가 따라갑니다. 어긋나면 다시 터치하세요.";
+  const HINT_PLAIN = "이 곡은 시간 정보가 없는 가사라서 자동으로 따라가지 않습니다. 손으로 스크롤해서 보세요.";
+
+  // ---------------------------------------------------------------- 목록 화면 (팟캐스트)
   let show = store.get("show", "badfriends");
   let episodes = [];
   let oldestFirst = store.get("oldestFirst", true);
@@ -119,9 +137,13 @@
 
   function setTab() {
     for (const b of document.querySelectorAll(".tab")) b.classList.toggle("on", b.dataset.show === show);
+    const isLyrics = show === "lyrics";
+    $("order").classList.toggle("hidden", isLyrics);
+    $("q").placeholder = isLyrics ? "노래 제목이나 가수 이름으로 검색 (엔터)" : "제목이나 게스트 이름으로 검색";
   }
 
   function renderList() {
+    if (show === "lyrics") return renderLyricsHome();
     const q = $("q").value.trim().toLowerCase();
     const last = store.get("last", null);
     $("order").textContent = oldestFirst ? "오래된 순" : "최신 순";
@@ -138,22 +160,11 @@
     }
     const frag = document.createDocumentFragment();
     for (const e of list) {
-      const row = document.createElement("div");
-      row.className = "ep" + (e.has_subs ? "" : " off") +
-        (last && last.show === show && last.id === e.id ? " last" : "");
-      const d = document.createElement("span");
-      d.className = "d";
-      d.textContent = day(e.published);
-      const n = document.createElement("span");
-      n.className = "n";
-      n.textContent = e.title;
-      if (!e.has_subs) {
-        const tag = document.createElement("span");
-        tag.className = "tag";
-        tag.textContent = "자막 준비 중";
-        n.appendChild(tag);
-      }
-      row.append(d, n);
+      const row = el("div", "ep" + (e.has_subs ? "" : " off") +
+        (last && last.show === show && last.id === e.id ? " last" : ""));
+      const n = el("span", "n", e.title);
+      if (!e.has_subs) n.appendChild(el("span", "tag", "자막 준비 중"));
+      row.append(el("span", "d", day(e.published)), n);
       if (e.has_subs) row.addEventListener("click", () => { location.hash = `#${show}/${e.id}`; });
       frag.appendChild(row);
     }
@@ -164,29 +175,105 @@
     show = s;
     store.set("show", s);
     setTab();
+    if (s === "lyrics") { renderLyricsHome(); return; }
     if (indexCache[s]) { episodes = indexCache[s]; renderList(); return; }
     $("episodes").innerHTML = '<div id="msg">목록을 불러오는 중입니다.</div>';
+    $("count").textContent = "";
     getJSON(`subs/${s}/index.json`)
       .then(data => { episodes = indexCache[s] = data.episodes || []; if (show === s) renderList(); })
       .catch(err => {
+        if (show !== s) return;
         $("episodes").innerHTML = `<div id="msg">목록을 불러오지 못했습니다. subs/${s}/index.json 이 올라가 있는지 확인하세요. (${err.message})</div>`;
       });
   }
 
-  for (const b of document.querySelectorAll(".tab")) {
-    b.addEventListener("click", () => { $("q").value = ""; loadShow(b.dataset.show); });
-  }
-  $("q").addEventListener("input", renderList);
-  $("order").addEventListener("click", () => {
-    oldestFirst = !oldestFirst;
-    store.set("oldestFirst", oldestFirst);
-    renderList();
-  });
+  // ---------------------------------------------------------------- 가사 목록 (LRCLIB)
+  const LRCLIB = "https://lrclib.net/api";
+  let results = null;      // 마지막 검색 결과 (null이면 아직 검색 안 함)
+  let lastQuery = "";
+  let searchSeq = 0;
 
-  // ---------------------------------------------------------------- 자막 화면
-  let segs = [], els = [], cur = -1;
+  const recent = () => store.get("recentSongs", []);
+  function addRecent(song) {
+    const list = recent().filter(r => r.id !== song.id);
+    list.unshift({ id: song.id, trackName: song.trackName, artistName: song.artistName,
+      duration: song.duration, synced: !!song.syncedLyrics });
+    store.set("recentSongs", list.slice(0, 30));
+  }
+
+  function songRow(s) {
+    const row = el("div", "ep");
+    row.append(el("span", "d", s.duration ? fmt(s.duration) : ""));
+    const n = el("span", "n", s.trackName || "제목 없음");
+    n.appendChild(el("span", "a", s.artistName || ""));
+    const synced = s.synced !== undefined ? s.synced : !!s.syncedLyrics;
+    if (s.instrumental) n.appendChild(el("span", "tag", "연주곡"));
+    else n.appendChild(el("span", synced ? "tag sync" : "tag", synced ? "시간 맞춤 가능" : "가사만"));
+    row.appendChild(n);
+    row.addEventListener("click", () => { location.hash = `#lyrics/${s.id}`; });
+    return row;
+  }
+
+  function renderLyricsHome() {
+    const box = $("episodes");
+    box.innerHTML = "";
+    if (results) {
+      $("count").textContent = `"${lastQuery}" 검색 결과 ${results.length}곡`;
+      if (!results.length) {
+        box.innerHTML = '<div id="msg">검색 결과가 없습니다. 영어 제목이나 가수 이름을 같이 넣어 보세요.</div>';
+        return;
+      }
+      for (const s of results) box.appendChild(songRow(s));
+      return;
+    }
+    const list = recent();
+    $("count").textContent = "";
+    if (!list.length) {
+      box.innerHTML = '<div id="msg">위 검색창에 노래 제목과 가수를 입력하고 엔터를 누르세요.<br>예: yellow coldplay</div>';
+      return;
+    }
+    box.appendChild(el("div", "sectionTitle", "최근에 본 노래"));
+    for (const s of list) box.appendChild(songRow(s));
+  }
+
+  function searchLyrics(q) {
+    q = q.trim();
+    if (!q) { results = null; renderLyricsHome(); return; }
+    const seq = ++searchSeq;
+    lastQuery = q;
+    $("count").textContent = "검색 중…";
+    $("episodes").innerHTML = '<div id="msg">가사를 찾는 중입니다.</div>';
+    getJSON(`${LRCLIB}/search?q=${encodeURIComponent(q)}`, {})
+      .then(list => {
+        if (seq !== searchSeq) return;
+        // 시간 정보가 있는 가사를 위로
+        results = (list || []).sort((a, b) => (!!b.syncedLyrics) - (!!a.syncedLyrics));
+        renderLyricsHome();
+      })
+      .catch(err => {
+        if (seq !== searchSeq) return;
+        results = null;
+        $("count").textContent = "";
+        $("episodes").innerHTML = `<div id="msg">가사 서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요. (${err.message})</div>`;
+      });
+  }
+
+  // LRC 형식 "[01:23.45] 가사"를 [{s, t}] 로 바꾼다. 한 줄에 시간이 여러 개 붙은 경우도 처리.
+  function parseLRC(text) {
+    const out = [];
+    for (const raw of (text || "").split(/\r?\n/)) {
+      const tags = [...raw.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+      if (!tags.length) continue;
+      const t = raw.replace(/\[[^\]]*\]/g, "").trim();
+      for (const m of tags) out.push({ s: Number(m[1]) * 60 + Number(m[2]), t: t || "♪" });
+    }
+    return out.sort((a, b) => a.s - b.s);
+  }
+
+  // ---------------------------------------------------------------- 자막/가사 화면
+  let segs = [], els = [], cur = -1, synced = true;
   let playing = false, base = 0, startedAt = 0;
-  let timer = null;
+  let openSeq = 0;
 
   const now = () => playing ? base + (performance.now() - startedAt) / 1000 : base;
 
@@ -216,6 +303,7 @@
   }
 
   function tick(force) {
+    if (!synced) return;
     const t = now();
     $("clock").textContent = fmt(t);
     const i = findIndex(t);
@@ -231,65 +319,133 @@
     }
   }
 
-  function openEpisode(s, id) {
+  function showReader(loadingText) {
     $("listView").classList.add("hidden");
     $("subView").classList.remove("hidden");
-    playing = false; base = 0; cur = -1; segs = []; els = [];
+    playing = false; base = 0; cur = -1; segs = []; els = []; synced = true;
     $("play").textContent = "▶ 시작";
     $("play").classList.add("paused");
     $("clock").textContent = "0:00";
     $("title").textContent = "불러오는 중…";
-    $("lines").innerHTML = '<div id="msg">자막을 불러오는 중입니다.</div>';
+    $("ctrls").classList.remove("hidden");
+    $("clock").classList.remove("hidden");
+    $("lines").classList.remove("plain");
+    $("lines").innerHTML = `<div id="msg">${loadingText}</div>`;
+    return ++openSeq;
+  }
+
+  // 줄 목록을 화면에 그린다. isSynced가 false면 시간 없이 글만 보여 준다.
+  function renderLines(title, list, isSynced, hint) {
+    synced = isSynced;
+    segs = list;
+    $("title").textContent = title;
+    document.title = title || "Podcast Subs";
+    $("hint").textContent = hint;
+    $("ctrls").classList.toggle("hidden", !isSynced);
+    $("clock").classList.toggle("hidden", !isSynced);
+    $("lines").classList.toggle("plain", !isSynced);
+    const frag = document.createDocumentFragment();
+    els = list.map(seg => {
+      const d = el("div", "ln");
+      if (isSynced) {
+        d.append(el("span", "t", fmt(seg.s)), document.createTextNode(seg.t));
+        d.addEventListener("click", () => setTime(seg.s, true));   // 터치한 줄로 맞추고 재생
+      } else {
+        d.textContent = seg.t;
+      }
+      frag.appendChild(d);
+      return d;
+    });
+    $("lines").innerHTML = "";
+    $("lines").appendChild(frag);
+    $("lines").scrollTop = 0;
+    tick(true);
+  }
+
+  function openEpisode(s, id) {
+    const seq = showReader("자막을 불러오는 중입니다.");
     getJSON(`subs/${s}/${id}.json`).then(data => {
+      if (seq !== openSeq) return;
       store.set("last", { show: s, id });
-      segs = data.segments || [];
-      $("title").textContent = data.title || "";
-      document.title = data.title || "Podcast Subs";
-      const frag = document.createDocumentFragment();
-      els = segs.map(seg => {
-        const d = document.createElement("div");
-        d.className = "ln";
-        const tt = document.createElement("span");
-        tt.className = "t";
-        tt.textContent = fmt(seg.s);
-        d.append(tt, document.createTextNode(seg.t));
-        d.addEventListener("click", () => setTime(seg.s, true));   // 터치한 문장으로 맞추고 재생
-        frag.appendChild(d);
-        return d;
-      });
-      $("lines").innerHTML = "";
-      $("lines").appendChild(frag);
-      $("lines").scrollTop = 0;
-      tick(true);
+      renderLines(data.title || "", data.segments || [], true, HINT_PODCAST);
     }).catch(err => {
+      if (seq !== openSeq) return;
       $("title").textContent = "자막을 불러오지 못했습니다";
       $("lines").innerHTML = `<div id="msg">자막 파일을 찾지 못했습니다. (${err.message})</div>`;
     });
   }
 
-  function closeEpisode() {
+  function openSong(id) {
+    const seq = showReader("가사를 불러오는 중입니다.");
+    getJSON(`${LRCLIB}/get/${encodeURIComponent(id)}`, {}).then(song => {
+      if (seq !== openSeq) return;
+      addRecent(song);
+      const title = `${song.trackName || ""} — ${song.artistName || ""}`;
+      if (song.instrumental) {
+        renderLines(title, [{ s: 0, t: "연주곡이라 가사가 없습니다." }], false, "");
+        return;
+      }
+      const timed = parseLRC(song.syncedLyrics);
+      if (timed.length) {
+        renderLines(title, timed, true, HINT_SYNC);
+      } else {
+        const plain = (song.plainLyrics || "가사가 없습니다.").split(/\r?\n/).map(t => ({ s: 0, t: t || " " }));
+        renderLines(title, plain, false, HINT_PLAIN);
+      }
+    }).catch(err => {
+      if (seq !== openSeq) return;
+      $("title").textContent = "가사를 불러오지 못했습니다";
+      $("lines").innerHTML = `<div id="msg">가사 서버에 연결하지 못했습니다. (${err.message})</div>`;
+    });
+  }
+
+  function closeReader() {
     setPlaying(false);
+    openSeq++;
     $("subView").classList.add("hidden");
     $("listView").classList.remove("hidden");
     document.title = "Podcast Subs";
     renderList();
   }
 
+  // ---------------------------------------------------------------- 이벤트
+  for (const b of document.querySelectorAll(".tab")) {
+    b.addEventListener("click", () => {
+      $("q").value = "";
+      results = null;
+      loadShow(b.dataset.show);
+    });
+  }
+  $("q").addEventListener("input", () => {
+    if (show !== "lyrics") renderList();
+    else if (!$("q").value.trim()) { results = null; renderLyricsHome(); }
+  });
+  $("q").addEventListener("keydown", e => {
+    if (show === "lyrics" && e.key === "Enter") { e.preventDefault(); $("q").blur(); searchLyrics($("q").value); }
+  });
+  $("order").addEventListener("click", () => {
+    oldestFirst = !oldestFirst;
+    store.set("oldestFirst", oldestFirst);
+    renderList();
+  });
   $("play").addEventListener("click", () => setPlaying(!playing));
   $("back").addEventListener("click", () => { location.hash = ""; });
   for (const b of document.querySelectorAll("button[data-d]")) {
     b.addEventListener("click", () => setTime(now() + Number(b.dataset.d), false));
   }
-  timer = setInterval(() => { if (playing) tick(false); }, 200);
+  setInterval(() => { if (playing) tick(false); }, 200);
 
-  // ---------------------------------------------------------------- 화면 전환 (#쇼/에피소드ID)
+  // ---------------------------------------------------------------- 화면 전환
+  // #badfriends/<id>, #tigerbelly/<id> : 팟캐스트 자막 / #lyrics/<id> : 노래 가사
   function route() {
     const m = location.hash.match(/^#(\w+)\/(\w+)$/);
-    if (m) {
+    if (!m) { closeReader(); return; }
+    if (m[1] === "lyrics") {
+      if (show !== "lyrics") loadShow("lyrics");
+      openSong(m[2]);
+    } else {
       if (show !== m[1]) loadShow(m[1]);
       openEpisode(m[1], m[2]);
-    } else {
-      closeEpisode();
     }
   }
   window.addEventListener("hashchange", route);
