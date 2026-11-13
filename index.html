@@ -4,12 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
 <title>Podcast Subs</title>
 <style>
   :root {
     --bg: #0e0f11; --panel: #17191c; --line: #2a2d31; --hover: #1d2024;
     --ink: #f2f3f5; --dim: #6c727a; --mid: #a3a9b1; --accent: #4fa3ff; --now: #1b2633;
-    --music: #ff5c7a;
+    --music: #ff5c7a; --ok: #3ecf8e; --warn: #f5b942;
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
@@ -19,6 +20,11 @@
     border-radius: 10px; font-size: 22px; padding: 12px 18px; min-width: 64px; cursor: pointer; }
   button:active { background: #31353a; }
   .hidden { display: none !important; }
+
+  /* ---------- 자동 맞춤 상태 ---------- */
+  .auto { font-size: 16px; padding: 10px 14px; min-width: 0; color: var(--dim); }
+  .auto.on { color: var(--ok); border-color: var(--ok); }
+  .auto.wait { color: var(--warn); border-color: var(--warn); }
 
   /* ---------- 목록 화면 ---------- */
   #listView { flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -40,6 +46,7 @@
   .ep.off .n { color: var(--dim); }
   .ep .tag { color: var(--dim); font-size: 14px; margin-left: 8px; white-space: nowrap; }
   .ep .tag.sync { color: var(--music); }
+  .ep .tag.match { color: var(--ok); }
   .ep.last .n::after { content: "  · 마지막으로 본 화"; color: var(--accent); font-size: 15px; }
   .sectionTitle { color: var(--dim); font-size: 16px; padding: 14px 12px 6px; }
 
@@ -54,6 +61,10 @@
   #play { background: var(--accent); color: #06121f; border-color: var(--accent);
     font-weight: 700; min-width: 140px; }
   #play.paused { background: #24272b; color: var(--ink); border-color: var(--line); }
+  #banner { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 12px 16px;
+    background: #2a2210; border-bottom: 1px solid var(--warn); font-size: 18px; }
+  #banner .msg { color: var(--warn); margin-right: 6px; }
+  #banner button { font-size: 18px; padding: 10px 14px; }
   #lines { flex: 1; overflow-y: auto; padding: 40vh 24px; }
   #lines.plain { padding: 24px; }
   .ln { font-size: 30px; line-height: 1.35; color: var(--dim); padding: 10px 12px;
@@ -78,6 +89,7 @@
     <button id="order"></button>
     <input id="q" type="search" autocomplete="off">
     <span id="count"></span>
+    <button class="auto hidden" id="autoList"></button>
   </div>
   <div id="episodes"><div id="msg">목록을 불러오는 중입니다.</div></div>
 </section>
@@ -94,15 +106,17 @@
       <button data-d="1">+1</button>
       <button data-d="5">+5</button>
     </div>
+    <button class="auto hidden" id="autoSub"></button>
     <div id="clock">0:00</div>
   </header>
+  <div id="banner" class="hidden"></div>
   <div id="lines"></div>
   <div id="hint"></div>
 </section>
 
 <script>
 (() => {
-  // ---------------------------------------------------------------- 공통
+  // ================================================================ 공통
   const $ = id => document.getElementById(id);
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -124,12 +138,28 @@
     if (text !== undefined) e.textContent = text;
     return e;
   };
+  const norm = s => (s || "").toLowerCase().replace(/[^a-z0-9가-힣]+/g, " ").trim();
 
   const HINT_PODCAST = "에피소드를 틀고 지금 들리는 문장을 터치하면 그 시간부터 자막이 따라갑니다. 차에서 일시정지하면 여기서도 ⏸를 눌러 주세요.";
+  const HINT_PODCAST_AUTO = "자동 맞춤 중: 차의 재생 위치를 따라갑니다. 광고 때문에 어긋나면 지금 들리는 문장을 한 번 터치하세요.";
   const HINT_SYNC = "노래를 틀고 지금 부르는 줄을 터치하면 그때부터 가사가 따라갑니다. 어긋나면 다시 터치하세요.";
+  const HINT_SYNC_AUTO = "자동 맞춤 중: 차의 재생 위치를 따라갑니다. 어긋나면 지금 부르는 줄을 터치하세요.";
   const HINT_PLAIN = "이 곡은 시간 정보가 없는 가사라서 자동으로 따라가지 않습니다. 손으로 스크롤해서 보세요.";
 
-  // ---------------------------------------------------------------- 목록 화면 (팟캐스트)
+  // ================================================================ 자동 맞춤 설정
+  // 처음 한 번 ?w=<Worker 주소>&k=<비밀 키> 로 열면 저장하고 주소창에서 지운다.
+  (function readSetup() {
+    const p = new URLSearchParams(location.search);
+    if (p.get("w")) store.set("worker", p.get("w").replace(/\/+$/, ""));
+    if (p.get("k")) store.set("key", p.get("k"));
+    if (p.get("w") || p.get("k")) history.replaceState(null, "", location.pathname + location.hash);
+  })();
+  const WORKER = store.get("worker", "");
+  const KEY = store.get("key", "");
+  const autoReady = !!(WORKER && KEY);
+  let autoOn = autoReady && store.get("autoOn", true);
+
+  // ================================================================ 목록 화면 (팟캐스트)
   let show = store.get("show", "badfriends");
   let episodes = [];
   let oldestFirst = store.get("oldestFirst", true);
@@ -171,6 +201,11 @@
     box.appendChild(frag);
   }
 
+  function fetchIndex(s) {
+    if (indexCache[s]) return Promise.resolve(indexCache[s]);
+    return getJSON(`subs/${s}/index.json`).then(data => (indexCache[s] = data.episodes || []));
+  }
+
   function loadShow(s) {
     show = s;
     store.set("show", s);
@@ -179,17 +214,17 @@
     if (indexCache[s]) { episodes = indexCache[s]; renderList(); return; }
     $("episodes").innerHTML = '<div id="msg">목록을 불러오는 중입니다.</div>';
     $("count").textContent = "";
-    getJSON(`subs/${s}/index.json`)
-      .then(data => { episodes = indexCache[s] = data.episodes || []; if (show === s) renderList(); })
+    fetchIndex(s)
+      .then(list => { if (show === s) { episodes = list; renderList(); } })
       .catch(err => {
         if (show !== s) return;
         $("episodes").innerHTML = `<div id="msg">목록을 불러오지 못했습니다. subs/${s}/index.json 이 올라가 있는지 확인하세요. (${err.message})</div>`;
       });
   }
 
-  // ---------------------------------------------------------------- 가사 목록 (LRCLIB)
+  // ================================================================ 가사 목록 (LRCLIB)
   const LRCLIB = "https://lrclib.net/api";
-  let results = null;      // 마지막 검색 결과 (null이면 아직 검색 안 함)
+  let results = null;
   let lastQuery = "";
   let searchSeq = 0;
 
@@ -198,10 +233,12 @@
     const list = recent().filter(r => r.id !== song.id);
     list.unshift({ id: song.id, trackName: song.trackName, artistName: song.artistName,
       duration: song.duration, synced: !!song.syncedLyrics });
-    store.set("recentSongs", list.slice(0, 30));
+    store.set("recentSongs", list.slice(0, 50));
   }
+  // 차에서 재생 중인 곡 길이와 비슷한(±2초) 최근 곡
+  const sameLength = d => d ? recent().filter(r => r.duration && Math.abs(r.duration - d) <= 2) : [];
 
-  function songRow(s) {
+  function songRow(s, matched) {
     const row = el("div", "ep");
     row.append(el("span", "d", s.duration ? fmt(s.duration) : ""));
     const n = el("span", "n", s.trackName || "제목 없음");
@@ -209,6 +246,7 @@
     const synced = s.synced !== undefined ? s.synced : !!s.syncedLyrics;
     if (s.instrumental) n.appendChild(el("span", "tag", "연주곡"));
     else n.appendChild(el("span", synced ? "tag sync" : "tag", synced ? "시간 맞춤 가능" : "가사만"));
+    if (matched) n.appendChild(el("span", "tag match", "지금 곡과 길이 같음"));
     row.appendChild(n);
     row.addEventListener("click", () => { location.hash = `#lyrics/${s.id}`; });
     return row;
@@ -217,23 +255,31 @@
   function renderLyricsHome() {
     const box = $("episodes");
     box.innerHTML = "";
+    const d = car.duration && isMusic(car) ? car.duration : 0;
     if (results) {
       $("count").textContent = `"${lastQuery}" 검색 결과 ${results.length}곡`;
       if (!results.length) {
         box.innerHTML = '<div id="msg">검색 결과가 없습니다. 영어 제목이나 가수 이름을 같이 넣어 보세요.</div>';
         return;
       }
-      for (const s of results) box.appendChild(songRow(s));
+      for (const s of results) box.appendChild(songRow(s, d && s.duration && Math.abs(s.duration - d) <= 2));
       return;
     }
-    const list = recent();
     $("count").textContent = "";
-    if (!list.length) {
+    const matches = sameLength(d);
+    if (matches.length) {
+      box.appendChild(el("div", "sectionTitle", `지금 차에서 재생 중인 곡(${fmt(d)})과 길이가 같은 노래`));
+      for (const s of matches) box.appendChild(songRow(s, true));
+    }
+    const list = recent().filter(r => !matches.includes(r));
+    if (!list.length && !matches.length) {
       box.innerHTML = '<div id="msg">위 검색창에 노래 제목과 가수를 입력하고 엔터를 누르세요.<br>예: yellow coldplay</div>';
       return;
     }
-    box.appendChild(el("div", "sectionTitle", "최근에 본 노래"));
-    for (const s of list) box.appendChild(songRow(s));
+    if (list.length) {
+      box.appendChild(el("div", "sectionTitle", "최근에 본 노래"));
+      for (const s of list.slice(0, 30)) box.appendChild(songRow(s, false));
+    }
   }
 
   function searchLyrics(q) {
@@ -246,8 +292,9 @@
     getJSON(`${LRCLIB}/search?q=${encodeURIComponent(q)}`, {})
       .then(list => {
         if (seq !== searchSeq) return;
-        // 시간 정보가 있는 가사를 위로
-        results = (list || []).sort((a, b) => (!!b.syncedLyrics) - (!!a.syncedLyrics));
+        const d = car.duration && isMusic(car) ? car.duration : 0;
+        const score = s => (d && s.duration && Math.abs(s.duration - d) <= 2 ? 2 : 0) + (s.syncedLyrics ? 1 : 0);
+        results = (list || []).sort((a, b) => score(b) - score(a));
         renderLyricsHome();
       })
       .catch(err => {
@@ -258,7 +305,7 @@
       });
   }
 
-  // LRC 형식 "[01:23.45] 가사"를 [{s, t}] 로 바꾼다. 한 줄에 시간이 여러 개 붙은 경우도 처리.
+  // LRC 형식 "[01:23.45] 가사"를 [{s, t}] 로 바꾼다.
   function parseLRC(text) {
     const out = [];
     for (const raw of (text || "").split(/\r?\n/)) {
@@ -270,10 +317,11 @@
     return out.sort((a, b) => a.s - b.s);
   }
 
-  // ---------------------------------------------------------------- 자막/가사 화면
+  // ================================================================ 자막/가사 화면
   let segs = [], els = [], cur = -1, synced = true;
   let playing = false, base = 0, startedAt = 0;
   let openSeq = 0;
+  let opened = null;   // { kind: "podcast"|"lyrics", show, id, duration }
 
   const now = () => playing ? base + (performance.now() - startedAt) / 1000 : base;
 
@@ -308,8 +356,7 @@
     $("clock").textContent = fmt(t);
     const i = findIndex(t);
     if (i === cur && !force) return;
-    if (cur >= 0 && els[cur]) els[cur].classList.remove("now");
-    for (const e of $("lines").querySelectorAll(".near")) e.classList.remove("near");
+    for (const e of $("lines").querySelectorAll(".now, .near")) e.classList.remove("now", "near");
     cur = i;
     if (i >= 0) {
       els[i].classList.add("now");
@@ -322,7 +369,8 @@
   function showReader(loadingText) {
     $("listView").classList.add("hidden");
     $("subView").classList.remove("hidden");
-    playing = false; base = 0; cur = -1; segs = []; els = []; synced = true;
+    hideBanner();
+    playing = false; base = 0; cur = -1; segs = []; els = []; synced = true; offset = 0;
     $("play").textContent = "▶ 시작";
     $("play").classList.add("paused");
     $("clock").textContent = "0:00";
@@ -334,7 +382,6 @@
     return ++openSeq;
   }
 
-  // 줄 목록을 화면에 그린다. isSynced가 false면 시간 없이 글만 보여 준다.
   function renderLines(title, list, isSynced, hint) {
     synced = isSynced;
     segs = list;
@@ -349,7 +396,7 @@
       const d = el("div", "ln");
       if (isSynced) {
         d.append(el("span", "t", fmt(seg.s)), document.createTextNode(seg.t));
-        d.addEventListener("click", () => setTime(seg.s, true));   // 터치한 줄로 맞추고 재생
+        d.addEventListener("click", () => tapLine(seg.s));
       } else {
         d.textContent = seg.t;
       }
@@ -360,14 +407,18 @@
     $("lines").appendChild(frag);
     $("lines").scrollTop = 0;
     tick(true);
+    updateAutoUI();
+    if (autoOn) applyCar(true);
   }
 
   function openEpisode(s, id) {
     const seq = showReader("자막을 불러오는 중입니다.");
+    opened = { kind: "podcast", show: s, id };
     getJSON(`subs/${s}/${id}.json`).then(data => {
       if (seq !== openSeq) return;
       store.set("last", { show: s, id });
-      renderLines(data.title || "", data.segments || [], true, HINT_PODCAST);
+      opened.duration = data.audio_duration || data.feed_duration || 0;
+      renderLines(data.title || "", data.segments || [], true, autoOn ? HINT_PODCAST_AUTO : HINT_PODCAST);
     }).catch(err => {
       if (seq !== openSeq) return;
       $("title").textContent = "자막을 불러오지 못했습니다";
@@ -377,9 +428,11 @@
 
   function openSong(id) {
     const seq = showReader("가사를 불러오는 중입니다.");
+    opened = { kind: "lyrics", id };
     getJSON(`${LRCLIB}/get/${encodeURIComponent(id)}`, {}).then(song => {
       if (seq !== openSeq) return;
       addRecent(song);
+      opened.duration = song.duration || 0;
       const title = `${song.trackName || ""} — ${song.artistName || ""}`;
       if (song.instrumental) {
         renderLines(title, [{ s: 0, t: "연주곡이라 가사가 없습니다." }], false, "");
@@ -387,7 +440,7 @@
       }
       const timed = parseLRC(song.syncedLyrics);
       if (timed.length) {
-        renderLines(title, timed, true, HINT_SYNC);
+        renderLines(title, timed, true, autoOn ? HINT_SYNC_AUTO : HINT_SYNC);
       } else {
         const plain = (song.plainLyrics || "가사가 없습니다.").split(/\r?\n/).map(t => ({ s: 0, t: t || " " }));
         renderLines(title, plain, false, HINT_PLAIN);
@@ -402,13 +455,215 @@
   function closeReader() {
     setPlaying(false);
     openSeq++;
+    opened = null;
+    hideBanner();
     $("subView").classList.add("hidden");
     $("listView").classList.remove("hidden");
     document.title = "Podcast Subs";
     renderList();
   }
 
-  // ---------------------------------------------------------------- 이벤트
+  const readerOpen = () => !$("subView").classList.contains("hidden");
+
+  // ================================================================ 자동 맞춤
+  // car: 차에서 마지막으로 받은 재생 정보. carAt: 그 값을 받은 시각(performance.now).
+  let car = {};
+  let carAt = 0;
+  let offset = 0;          // 자막 시간 = 차 재생 위치 + offset (광고 등으로 어긋날 때 터치로 보정)
+  let lastTrackKey = "";
+  let pollTimer = null;
+  let failCount = 0;
+
+  const isMusic = c => c && c.source && !/podcast/i.test(c.source);
+  const isPodcast = c => c && /podcast/i.test(c.source || "");
+  const carPos = () => {
+    if (!car.state) return 0;
+    const run = car.status === "Playing" ? (performance.now() - carAt) / 1000 : 0;
+    return (car.elapsed || 0) + run;
+  };
+
+  function tapLine(s) {
+    if (autoOn && car.state === "online" && car.status) {
+      offset = s - carPos();      // 이 줄이 지금 들린다 → 차 위치와의 차이를 기억
+      applyCar(true);
+    } else {
+      setTime(s, true);
+    }
+  }
+
+  // 차 재생 위치를 화면 타이머에 반영
+  function applyCar(force) {
+    if (!autoOn || !readerOpen() || !synced || car.state !== "online" || !car.status) return;
+    const t = carPos() + offset;
+    const drift = Math.abs(now() - t);
+    const shouldPlay = car.status === "Playing";
+    if (force || drift > 0.6 || shouldPlay !== playing) {
+      base = Math.max(0, t);
+      startedAt = performance.now();
+      if (shouldPlay !== playing) setPlaying(shouldPlay);
+      cur = -1;
+      tick(true);
+    }
+  }
+
+  function setAutoText(cls, text) {
+    for (const id of ["autoList", "autoSub"]) {
+      const b = $(id);
+      b.classList.toggle("hidden", !autoReady);
+      b.classList.remove("on", "wait");
+      if (cls) b.classList.add(cls);
+      b.textContent = text;
+    }
+  }
+
+  function updateAutoUI() {
+    if (!autoReady) return setAutoText("", "");
+    if (!autoOn) return setAutoText("", "자동 맞춤 꺼짐");
+    if (!car.state) return setAutoText("wait", "차 연결 중…");
+    if (car.state === "asleep") return setAutoText("wait", "차가 자는 중");
+    if (car.state === "error") return setAutoText("wait", "차 연결 오류");
+    if (!car.status || car.status === "Stopped") return setAutoText("wait", "재생 중인 것 없음");
+    const what = car.title ? car.title : (isPodcast(car) ? "팟캐스트" : car.source || "재생");
+    return setAutoText("on", `● ${what} ${fmt(carPos())}`);
+  }
+
+  // 곡이나 에피소드가 바뀌었는지 판단하는 열쇠
+  const trackKey = c => [c.source, c.title, c.artist, Math.round(c.duration || 0)].join("|");
+
+  async function poll() {
+    pollTimer = null;
+    if (!autoOn || document.hidden) return schedule(15000);
+    let data;
+    try {
+      const t0 = performance.now();
+      data = await getJSON(`${WORKER}/now?key=${encodeURIComponent(KEY)}`);
+      // 요청 왕복 시간의 절반만큼 재생 위치를 보정
+      carAt = performance.now() - (performance.now() - t0) / 2;
+      failCount = 0;
+    } catch (e) {
+      failCount++;
+      car = { state: "error", error: e.message };
+      updateAutoUI();
+      return schedule(Math.min(60000, 15000 * failCount));
+    }
+    car = data;
+    updateAutoUI();
+    if (car.state === "online" && car.status) {
+      const key = trackKey(car);
+      const changed = lastTrackKey && key !== lastTrackKey;
+      lastTrackKey = key;
+      onCar(changed);
+    }
+    // 재생 중이면 15초, 아니면 60초마다 (요금 절약)
+    schedule(car.state === "online" && car.status === "Playing" ? 15000 : 60000);
+  }
+
+  function schedule(ms) {
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = setTimeout(poll, ms);
+  }
+
+  // 재생 정보를 받을 때마다: 열린 화면과 맞는지 확인하고, 아니면 자동으로 찾거나 고르라고 알린다
+  function onCar(changed) {
+    if (!readerOpen()) {
+      if (show === "lyrics" && !results) renderLyricsHome();
+      autoOpen();
+      return;
+    }
+    if (!opened || !opened.duration) return applyCar(false);
+    if (opened.keepKey === trackKey(car)) return applyCar(false);
+    const durOk = !car.duration || Math.abs(car.duration - opened.duration) <= 3 ||
+      opened.kind === "podcast";   // 팟캐스트는 광고 때문에 길이가 다를 수 있음
+    const kindOk = opened.kind === "podcast" ? !isMusic(car) : !isPodcast(car);
+    if (durOk && kindOk && !changed) return applyCar(false);
+    if (durOk && kindOk && changed && opened.kind === "lyrics") return applyCar(true);
+    // 다른 곡/에피소드가 재생 중
+    autoOpen() || showSwitchBanner();
+  }
+
+  // 제목이 오면 곡이나 에피소드를 자동으로 연다. 열었으면 true.
+  function autoOpen() {
+    if (!car.title) {
+      if (!readerOpen() && isMusic(car) && sameLength(car.duration).length === 1) {
+        const only = sameLength(car.duration)[0];
+        if (!(opened && opened.id == only.id)) { location.hash = `#lyrics/${only.id}`; return true; }
+      }
+      return false;
+    }
+    const key = trackKey(car);
+    if (autoOpen.lastKey === key) return false;   // 같은 곡에 대해 한 번만 시도
+    autoOpen.lastKey = key;
+    if (isPodcast(car)) {
+      const want = norm(car.title);
+      Promise.all(["badfriends", "tigerbelly"].map(s => fetchIndex(s).then(list => list.map(e => ({ s, e }))).catch(() => [])))
+        .then(all => {
+          const hit = all.flat().find(x => x.e.has_subs && (norm(x.e.title) === want ||
+            norm(x.e.title).includes(want) || want.includes(norm(x.e.title))));
+          if (hit && !(opened && opened.id === hit.e.id)) location.hash = `#${hit.s}/${hit.e.id}`;
+          else if (!hit && readerOpen()) showSwitchBanner();
+        });
+      return true;
+    }
+    const q = new URLSearchParams({ track_name: car.title });
+    if (car.artist) q.set("artist_name", car.artist);
+    getJSON(`${LRCLIB}/search?${q}`, {}).then(list => {
+      const d = car.duration;
+      const best = (list || [])
+        .filter(s => !d || !s.duration || Math.abs(s.duration - d) <= 3)
+        .sort((a, b) => (!!b.syncedLyrics) - (!!a.syncedLyrics))[0];
+      if (best && !(opened && opened.id == best.id)) location.hash = `#lyrics/${best.id}`;
+      else if (!best && readerOpen()) showSwitchBanner();
+    }).catch(() => {});
+    return true;
+  }
+
+  function hideBanner() { $("banner").classList.add("hidden"); $("banner").innerHTML = ""; }
+
+  function showSwitchBanner() {
+    const b = $("banner");
+    if (!b.classList.contains("hidden") && b.dataset.key === trackKey(car)) return;
+    b.dataset.key = trackKey(car);
+    b.innerHTML = "";
+    const label = car.title ? `"${car.title}"` : (isPodcast(car) ? "다른 에피소드" : `다른 곡(${fmt(car.duration || 0)})`);
+    b.appendChild(el("span", "msg", `차에서 ${label}이 재생 중이에요.`));
+    if (isMusic(car)) {
+      for (const s of sameLength(car.duration).slice(0, 3)) {
+        const btn = el("button", "", `${s.trackName} — ${s.artistName}`);
+        btn.addEventListener("click", () => { location.hash = `#lyrics/${s.id}`; });
+        b.appendChild(btn);
+      }
+      const find = el("button", "", "가사 찾기");
+      find.addEventListener("click", () => { show = "lyrics"; location.hash = ""; loadShow("lyrics"); $("q").focus(); });
+      b.appendChild(find);
+    } else {
+      const list = el("button", "", "목록으로");
+      list.addEventListener("click", () => { location.hash = ""; });
+      b.appendChild(list);
+    }
+    const keep = el("button", "", "그대로 보기");
+    keep.addEventListener("click", () => {
+      hideBanner();
+      if (opened) opened.keepKey = trackKey(car);   // 지금 재생 중인 것을 이 화면의 곡으로 인정
+      applyCar(true);
+    });
+    b.appendChild(keep);
+    b.classList.remove("hidden");
+  }
+
+  function toggleAuto() {
+    if (!autoReady) return;
+    autoOn = !autoOn;
+    store.set("autoOn", autoOn);
+    if (autoOn) { lastTrackKey = ""; schedule(0); } else { car = {}; }
+    if (readerOpen() && opened) {
+      $("hint").textContent = opened.kind === "podcast"
+        ? (autoOn ? HINT_PODCAST_AUTO : HINT_PODCAST)
+        : (synced ? (autoOn ? HINT_SYNC_AUTO : HINT_SYNC) : HINT_PLAIN);
+    }
+    updateAutoUI();
+  }
+
+  // ================================================================ 이벤트
   for (const b of document.querySelectorAll(".tab")) {
     b.addEventListener("click", () => {
       $("q").value = "";
@@ -431,11 +686,20 @@
   $("play").addEventListener("click", () => setPlaying(!playing));
   $("back").addEventListener("click", () => { location.hash = ""; });
   for (const b of document.querySelectorAll("button[data-d]")) {
-    b.addEventListener("click", () => setTime(now() + Number(b.dataset.d), false));
+    b.addEventListener("click", () => {
+      if (autoOn && car.state === "online" && car.status) { offset += Number(b.dataset.d); applyCar(true); }
+      else setTime(now() + Number(b.dataset.d), false);
+    });
   }
-  setInterval(() => { if (playing) tick(false); }, 200);
+  $("autoList").addEventListener("click", toggleAuto);
+  $("autoSub").addEventListener("click", toggleAuto);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && autoOn) schedule(0); });
+  setInterval(() => {
+    if (playing) tick(false);
+    if (autoOn && car.status === "Playing") updateAutoUI();
+  }, 250);
 
-  // ---------------------------------------------------------------- 화면 전환
+  // ================================================================ 화면 전환
   // #badfriends/<id>, #tigerbelly/<id> : 팟캐스트 자막 / #lyrics/<id> : 노래 가사
   function route() {
     const m = location.hash.match(/^#(\w+)\/(\w+)$/);
@@ -452,6 +716,8 @@
 
   loadShow(show);
   route();
+  updateAutoUI();
+  if (autoOn) schedule(0);
 })();
 </script>
 </body>
