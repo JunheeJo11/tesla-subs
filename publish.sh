@@ -5,7 +5,7 @@
 set -e
 cd "$(dirname "$0")"
 
-git add index.html subs make_subs.py run.sh publish.sh requirements.txt .gitignore
+git add index.html callback.html subs make_subs.py run.sh publish.sh requirements.txt .gitignore
 
 if git diff --cached --quiet; then
   echo "새로 올릴 변경 사항이 없습니다."

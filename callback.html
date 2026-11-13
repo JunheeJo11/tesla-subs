@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Tesla 연결</title>
+<style>
+  body { margin: 0; padding: 32px 20px; background: #0e0f11; color: #f2f3f5;
+    font-family: -apple-system, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; }
+  h1 { font-size: 24px; }
+  #code { width: 100%; font-size: 18px; padding: 14px; border-radius: 10px; border: 1px solid #2a2d31;
+    background: #17191c; color: #f2f3f5; word-break: break-all; }
+  button { margin-top: 14px; font-size: 20px; padding: 12px 22px; border-radius: 10px; border: 0;
+    background: #4fa3ff; color: #06121f; font-weight: 700; cursor: pointer; }
+  p { color: #a3a9b1; line-height: 1.5; }
+</style>
+</head>
+<body>
+<h1 id="head">테슬라 연결 코드</h1>
+<p id="desc">아래 코드를 복사해서 WSL 터미널의 "코드를 붙여넣기:"에 붙여 넣으세요. 코드는 몇 분 안에 만료되고 한 번만 쓸 수 있습니다.</p>
+<textarea id="code" rows="4" readonly></textarea><br>
+<button id="copy">복사하기</button>
+<script>
+  const q = new URLSearchParams(location.search);
+  const code = q.get("code");
+  const err = q.get("error");
+  if (code) {
+    document.getElementById("code").value = code;
+  } else {
+    document.getElementById("head").textContent = "코드가 없습니다";
+    document.getElementById("desc").textContent = err
+      ? "테슬라가 오류를 돌려줬습니다: " + err + " " + (q.get("error_description") || "")
+      : "이 페이지는 테슬라 로그인 뒤 자동으로 열리는 페이지입니다.";
+    document.getElementById("code").style.display = "none";
+    document.getElementById("copy").style.display = "none";
+  }
+  // 코드가 주소창 기록에 남지 않게 지운다
+  history.replaceState(null, "", location.pathname);
+  document.getElementById("copy").addEventListener("click", () => {
+    const t = document.getElementById("code");
+    t.select();
+    try { navigator.clipboard.writeText(t.value); } catch (e) { document.execCommand("copy"); }
+    document.getElementById("copy").textContent = "복사됨";
+  });
+</script>
+</body>
+</html>
